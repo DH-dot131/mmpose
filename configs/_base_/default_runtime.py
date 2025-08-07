@@ -3,9 +3,16 @@ default_scope = 'mmpose'
 # hooks
 default_hooks = dict(
     timer=dict(type='IterTimerHook'),
-    logger=dict(type='LoggerHook', interval=50),
+    logger=dict(type='LoggerHook', interval=100),
     param_scheduler=dict(type='ParamSchedulerHook'),
-    checkpoint=dict(type='CheckpointHook', interval=10),
+    checkpoint=dict(
+        by_epoch=True,
+        interval=2,
+        max_keep_ckpts=5,
+        rule='greater',
+        save_best='PCK',
+        save_last=False,
+        type='CheckpointHook'),
     sampler_seed=dict(type='DistSamplerSeedHook'),
     visualization=dict(type='PoseVisualizationHook', enable=False),
     badcase=dict(
@@ -13,7 +20,8 @@ default_hooks = dict(
         enable=False,
         out_dir='badcase',
         metric_type='loss',
-        badcase_thr=5))
+        badcase_thr=5)
+    )
 
 # custom hooks
 custom_hooks = [
@@ -31,8 +39,8 @@ env_cfg = dict(
 
 # visualizer
 vis_backends = [
-    dict(type='LocalVisBackend'),
-    # dict(type='TensorboardVisBackend'),
+    # dict(type='LocalVisBackend'),
+    dict(type='TensorboardVisBackend'),
     # dict(type='WandbVisBackend'),
 ]
 visualizer = dict(

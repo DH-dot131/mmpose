@@ -120,12 +120,9 @@ class DINOv3(BaseBackbone):
         """
         batch_size, _, input_h, input_w = x.shape
         
-        # DINOv3 expects normalized images
-        # Denormalize from MMPose format [0, 255] to [0, 1]
-        if x.max() > 10:  # If not already normalized
-            x = x / 255.0
-        
         # Forward through DINOv3
+        # DINOv3's processor handles input normalization automatically
+        # It expects images in [0, 255] range and will normalize internally
         with torch.set_grad_enabled(not self.frozen):
             outputs = self.model(pixel_values=x)
         

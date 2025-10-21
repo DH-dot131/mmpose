@@ -24,14 +24,15 @@ dataset_type = 'CocoDataset'
 data_mode = 'topdown'
 data_root = '../data/foot_ap_mmpose/'
 
-# DINOv3 ViT-L/16는 patch_size=16이므로 518x518 -> 32x32 feature map
+# RAD-DINO는 37×37 feature map을 생성하므로 heatmap_size 조정
 codec = dict(
-    type='MSRAHeatmap', input_size=(518, 518), heatmap_size=(32, 32), sigma=3)
+    type='MSRAHeatmap', input_size=(518, 518), heatmap_size=(37, 37), sigma=3) # 384x288 -> 518x518
 
 train_pipeline = [
     dict(type='LoadImage'),
     dict(type='GetBBoxCenterScale'),
     dict(type='RandomFlip', direction='horizontal'),
+    #dict(type='RandomHalfBody'),
     dict(type='RandomBBoxTransform'),
     dict(type='TopdownAffine', input_size=codec['input_size']),
     dict(type='GenerateTarget', encoder=codec),
@@ -46,7 +47,7 @@ val_pipeline = [
 ]
 
 train_dataloader = dict(
-    batch_size=32,
+    batch_size=8,
     num_workers=8,
     persistent_workers=True,
     sampler=dict(type='DefaultSampler', shuffle=True),
@@ -62,7 +63,7 @@ train_dataloader = dict(
 )
 
 val_dataloader = dict(
-    batch_size=32,
+    batch_size=1,
     num_workers=8,
     persistent_workers=True,
     sampler=dict(type='DefaultSampler', shuffle=False),
@@ -72,6 +73,7 @@ val_dataloader = dict(
         data_mode=data_mode,
         ann_file='annotations_val.json',
         data_prefix=dict(img='images/'),
+        pipeline=val_pipeline,
         metainfo=dict(from_file='configs/_base_/datasets/custom_20_keypoints_metainfo.py'),
         bbox_file = None
     ),
@@ -88,6 +90,7 @@ test_dataloader = dict(
         data_mode=data_mode,
         ann_file='annotations_test.json',
         data_prefix=dict(img='images/'),
+        pipeline=val_pipeline,
         metainfo=dict(from_file='configs/_base_/datasets/custom_20_keypoints_metainfo.py'),
         bbox_file = None
     )
@@ -115,18 +118,21 @@ optim_wrapper = dict(optimizer=dict(
 param_scheduler = [
     dict(
         type='LinearLR',
-        start_factor=0.001,
-        end=2,
+        start_factor=0.001,   # 초기 LR = base_lr × 0.001
+        end=2,              # 100 iteration 동안 warm-up
         by_epoch=True
     ),
     dict(
         type='CosineAnnealingLR',
-        T_max=48,
-        begin=2,
-        end=50,
+        T_max=48,             # 95 epoch 동안 cosine decay
+        begin=2,              # 5 epoch부터 시작
+        end=50,              # 전체 학습은 100 epoch
         by_epoch=True
     )
 ]
+
+
+norm_cfg = dict(type='SyncBN', requires_grad=True)
 
 
 model = dict(
@@ -134,18 +140,20 @@ model = dict(
     data_preprocessor=dict(
         type='PoseDataPreprocessor',
         mean=[0., 0., 0.],
-        std=[1., 1., 1.],
+        std=[1., 1., 1.], # 정규화 안함
         bgr_to_rgb=True),
     backbone=dict(
-        type='DINOv3',
-        pretrained='facebook/dinov3-vitl16-pretrain-lvd1689m',
+        type='RadDINO',
+        pretrained='microsoft/rad-dino',
         frozen=True,  # False: fine-tuning, True: frozen feature extractor
     ),
     head=dict(
         type='HeatmapHead',
-        in_channels=1024,  # DINOv3 ViT-L embed_dim
+        in_channels=768,  # RAD-DINO 출력 채널 (37×37×768)
         out_channels=20,  # 커스텀 keypoints 수
-        deconv_out_channels=None,  # No deconv, use native 32x32 resolution
+        # deconv_out_channels=(256,), # heatmap 해상도 증가
+        # deconv_kernel_sizes=(4,),
+        deconv_out_channels=None,
         loss=dict(type='KeypointMSELoss', use_target_weight=True),
         decoder=codec,
     ),

@@ -116,6 +116,8 @@ class RadDINO(BaseBackbone):
         input_h, input_w = x.shape[2], x.shape[3]
         
         # Extract features using RAD-DINO
+        # RAD-DINO's processor handles input normalization automatically
+        # It expects images in [0, 255] range and will rescale internally
         # cls_embeddings: (B, 768)
         # patch_embeddings: (B, 768, H', W')
         cls_embeddings, patch_embeddings = self.encoder.extract_features(x)

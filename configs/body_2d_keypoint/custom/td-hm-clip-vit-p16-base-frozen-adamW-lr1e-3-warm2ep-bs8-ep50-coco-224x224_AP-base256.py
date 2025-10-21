@@ -17,7 +17,7 @@ work_dir = os.path.join(
 )
 
 fp16 = dict(loss_scale='dynamic')
-auto_scale_lr = dict(base_batch_size=256, enable = True)
+auto_scale_lr = dict(base_batch_size=32, enable = True)
 
 
 dataset_type = 'CocoDataset'
@@ -26,7 +26,7 @@ data_root = '../data/foot_ap_mmpose/'
 
 # CLIP ViT-Base/32는 patch_size=32이므로 518x518 -> 16x16 feature map
 codec = dict(
-    type='MSRAHeatmap', input_size=(518, 518), heatmap_size=(16, 16), sigma=3)
+    type='MSRAHeatmap', input_size=(224, 224), heatmap_size=(14, 14), sigma=2)
 
 train_pipeline = [
     dict(type='LoadImage'),
@@ -46,7 +46,7 @@ val_pipeline = [
 ]
 
 train_dataloader = dict(
-    batch_size=32,
+    batch_size=8,
     num_workers=8,
     persistent_workers=True,
     sampler=dict(type='DefaultSampler', shuffle=True),
@@ -62,7 +62,7 @@ train_dataloader = dict(
 )
 
 val_dataloader = dict(
-    batch_size=32,
+    batch_size=8,
     num_workers=8,
     persistent_workers=True,
     sampler=dict(type='DefaultSampler', shuffle=False),
@@ -73,6 +73,8 @@ val_dataloader = dict(
         ann_file='annotations_val.json',
         data_prefix=dict(img='images/'),
         metainfo=dict(from_file='configs/_base_/datasets/custom_20_keypoints_metainfo.py'),
+        test_mode=True,
+        pipeline=val_pipeline,
         bbox_file = None
     ),
 )
@@ -88,6 +90,8 @@ test_dataloader = dict(
         data_mode=data_mode,
         ann_file='annotations_test.json',
         data_prefix=dict(img='images/'),
+        test_mode=True,
+        pipeline=val_pipeline,
         metainfo=dict(from_file='configs/_base_/datasets/custom_20_keypoints_metainfo.py'),
         bbox_file = None
     )
@@ -112,19 +116,20 @@ optim_wrapper = dict(optimizer=dict(
     weight_decay=0.05,
 ))
 
+# 변환된 설정 (iteration per epoch = 300이라고 가정)
 param_scheduler = [
     dict(
         type='LinearLR',
         start_factor=0.001,
-        end=2,
-        by_epoch=True
+        end=600,              # 2 epoch × 300 iter/epoch
+        by_epoch=False        # ✅ Iteration 기반
     ),
     dict(
         type='CosineAnnealingLR',
-        T_max=48,
-        begin=2,
-        end=50,
-        by_epoch=True
+        T_max=14400,          # 48 epoch × 300 iter/epoch
+        begin=600,            # 2 epoch × 300
+        end=15000,            # 50 epoch × 300
+        by_epoch=False        # ✅ Iteration 기반
     )
 ]
 
@@ -138,8 +143,8 @@ model = dict(
         bgr_to_rgb=True),
     backbone=dict(
         type='CLIPViT',
-        pretrained='openai/clip-vit-base-patch32',
-        frozen=True,  # False: fine-tuning, True: frozen feature extractor
+        pretrained='openai/clip-vit-base-patch16',
+        frozen=False,  # False: fine-tuning, True: frozen feature extractor
     ),
     head=dict(
         type='HeatmapHead',

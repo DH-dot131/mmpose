@@ -35,16 +35,16 @@ class CLIPViT(BaseBackbone):
     Example:
         >>> from mmpose.models import CLIPViT
         >>> import torch
-        >>> model = CLIPViT(pretrained='openai/clip-vit-base-patch32', frozen=True)
-        >>> x = torch.randn(2, 3, 518, 518)
+        >>> model = CLIPViT(pretrained='openai/clip-vit-base-patch16', frozen=True)
+        >>> x = torch.randn(2, 3, 224, 224)
         >>> features = model(x)
         >>> print(features[0].shape)
-        torch.Size([2, 768, 16, 16])
+        torch.Size([2, 768, 14, 14])
     """
 
     def __init__(
         self,
-        pretrained: str = 'openai/clip-vit-base-patch32',
+        pretrained: str = 'openai/clip-vit-base-patch16',
         frozen: bool = True,
         output_cls_token: bool = False,
         init_cfg: Optional[dict] = None
@@ -120,12 +120,9 @@ class CLIPViT(BaseBackbone):
         """
         batch_size, _, input_h, input_w = x.shape
         
-        # CLIP expects normalized images in [0, 1] range
-        # Denormalize from MMPose format [0, 255] to [0, 1]
-        if x.max() > 10:  # If not already normalized
-            x = x / 255.0
-        
         # Forward through CLIP vision encoder
+        # CLIP's processor handles input normalization automatically
+        # It expects images in [0, 255] range and will normalize internally
         with torch.set_grad_enabled(not self.frozen):
             vision_outputs = self.model.vision_model(pixel_values=x, output_hidden_states=True)
         

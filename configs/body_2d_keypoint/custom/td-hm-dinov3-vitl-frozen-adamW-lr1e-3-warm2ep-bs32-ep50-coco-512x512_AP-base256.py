@@ -4,7 +4,7 @@ custom_imports = dict(
     allow_failed_imports=False
 )
 
-_base_ = ['../../_base_/default_runtime.py', '../topdown_heatmap/coco/td-hm_hrnet-w32_8xb64-210e_coco-384x288.py']
+_base_ = ['../../_base_/default_runtime.py']
 
 # 현재 실행 중인 config 파일 경로
 _config_path = inspect.getfile(inspect.currentframe())
@@ -24,14 +24,14 @@ dataset_type = 'CocoDataset'
 data_mode = 'topdown'
 data_root = '../data/foot_ap_mmpose/'
 
+# DINOv3 ViT-L/16는 patch_size=16이므로 512x512 -> 32x32 feature map
 codec = dict(
-    type='MSRAHeatmap', input_size=(288, 384), heatmap_size=(72, 96), sigma=3)
+    type='MSRAHeatmap', input_size=(512, 512), heatmap_size=(32, 32), sigma=3)
 
 train_pipeline = [
     dict(type='LoadImage'),
     dict(type='GetBBoxCenterScale'),
     dict(type='RandomFlip', direction='horizontal'),
-    #dict(type='RandomHalfBody'),
     dict(type='RandomBBoxTransform'),
     dict(type='TopdownAffine', input_size=codec['input_size']),
     dict(type='GenerateTarget', encoder=codec),
@@ -44,55 +44,6 @@ val_pipeline = [
     dict(type='TopdownAffine', input_size=codec['input_size']),
     dict(type='PackPoseInputs')
 ]
-
-base_dataset_train = dict(
-    type=dataset_type,
-    data_root=data_root,
-    ann_file= 'annotations_train_val.json',
-    pipeline=train_pipeline,
-    data_prefix=dict(img='images/'),
-    metainfo=dict(from_file='configs/_base_/datasets/custom_20_keypoints_metainfo.py')
-)
-
-base_dataset_val = dict(
-    type=dataset_type,
-    data_root=data_root,
-    ann_file= 'annotations_train_val.json',
-    pipeline=val_pipeline,
-    data_prefix=dict(img='images/'),
-    metainfo=dict(from_file='configs/_base_/datasets/custom_20_keypoints_metainfo.py')
-)
-
-# train_dataloader = dict(
-#     batch_size=8,
-#     num_workers=8,
-#     dataset=dict(
-#         _delete_=True, 
-#         type= 'KFoldDataset',
-#         dataset=base_dataset_train,
-#         fold = 0,
-#         num_splits=5,
-#         test_mode=False,
-#         seed=42,
-#     ),
-#     sampler=dict(type='DefaultSampler', shuffle=True)
-# )
-
-# val_dataloader = dict(
-#     batch_size=8,
-#     num_workers=8,
-#     dataset=dict(
-#         _delete_=True, 
-#         type= 'KFoldDataset',
-#         dataset=base_dataset_val,
-#         fold = 0,
-#         num_splits=5,
-#         test_mode=True,
-#         seed=42,
-#     ),
-#     sampler=dict(type='DefaultSampler', shuffle=False)
-# )
-
 
 train_dataloader = dict(
     batch_size=32,
@@ -113,6 +64,7 @@ train_dataloader = dict(
 val_dataloader = dict(
     batch_size=32,
     num_workers=8,
+    persistent_workers=True,
     sampler=dict(type='DefaultSampler', shuffle=False),
     dataset=dict(
         type=dataset_type,
@@ -120,6 +72,7 @@ val_dataloader = dict(
         data_mode=data_mode,
         ann_file='annotations_val.json',
         data_prefix=dict(img='images/'),
+        pipeline=val_pipeline,
         metainfo=dict(from_file='configs/_base_/datasets/custom_20_keypoints_metainfo.py'),
         bbox_file = None
     ),
@@ -128,6 +81,7 @@ val_dataloader = dict(
 test_dataloader = dict(
     batch_size=1,
     num_workers=8,
+    persistent_workers=True,
     sampler=dict(type='DefaultSampler', shuffle=False),
     dataset=dict(
         type=dataset_type,
@@ -135,91 +89,73 @@ test_dataloader = dict(
         data_mode=data_mode,
         ann_file='annotations_test.json',
         data_prefix=dict(img='images/'),
+        pipeline=val_pipeline,
         metainfo=dict(from_file='configs/_base_/datasets/custom_20_keypoints_metainfo.py'),
         bbox_file = None
     )
 )
 
-#val_evaluator = dict(type='CocoMetric', ann_file=data_root + 'annotations_val.json')
-#test_evaluator = dict(type='CocoMetric', ann_file=data_root + 'annotations_test.json')
-
 val_evaluator = [
     dict(type='NME',norm_mode = 'keypoint_distance', keypoint_indices = [0,17], collect_device='gpu'),
     dict(type='AUC', collect_device = 'gpu'), 
     dict(type='PCKAccuracy', collect_device = 'gpu'),
-    ]
+]
 test_evaluator = val_evaluator
 
 
-train_cfg = dict(max_epochs=100, val_interval=2)
+train_cfg = dict(by_epoch=True, max_epochs=50, val_interval=1)
+val_cfg = dict()
+test_cfg = dict()
 
 # optimizer
 optim_wrapper = dict(optimizer=dict(
-    type='Adam',
-    lr=1e-2,
+    type='AdamW',
+    lr=1e-3,
+    weight_decay=0.05,
 ))
 
 param_scheduler = [
     dict(
         type='LinearLR',
-        start_factor=0.001,   # 초기 LR = base_lr × 0.001
-        end=100,                # 10 epoch 동안 warm-up
-        by_epoch=False
+        start_factor=0.001,
+        end=2,
+        by_epoch=True
     ),
     dict(
         type='CosineAnnealingLR',
-        T_max=95,             # 95 epoch 동안 cosine decay
-        begin=5,              # 5 epoch부터 시작
-        end=100,              # 전체 학습은 100 epoch
+        T_max=48,
+        begin=2,
+        end=50,
         by_epoch=True
     )
 ]
-
-
-norm_cfg = dict(type='SyncBN', requires_grad=True)
 
 
 model = dict(
     type='TopdownPoseEstimator',
     data_preprocessor=dict(
         type='PoseDataPreprocessor',
-        mean=[123.675, 116.28, 103.53],
-        std=[58.395, 57.12, 57.375],
+        mean=[0., 0., 0.],
+        std=[1., 1., 1.],
         bgr_to_rgb=True),
     backbone=dict(
-        type='HRNet',
-        extra=dict(
-            stage1=dict(
-                num_modules=1,
-                num_branches=1,
-                block='BOTTLENECK',
-                num_blocks=(4, ),
-                num_channels=(64, )),
-            stage2=dict(
-                num_modules=1,
-                num_branches=2,
-                block='BASIC',
-                num_blocks=(4, 4),
-                num_channels=(32, 64)),
-            stage3=dict(
-                num_modules=4,
-                num_branches=3,
-                block='BASIC',
-                num_blocks=(4, 4, 4),
-                num_channels=(32, 64, 128)),
-            stage4=dict(
-                num_modules=3,
-                num_branches=4,
-                block='BASIC',
-                num_blocks=(4, 4, 4, 4),
-                num_channels=(32, 64, 128, 256))),
-        frozen_stages=-1,
+        type='DINOv3',
+        pretrained='facebook/dinov3-vitl16-pretrain-lvd1689m',
+        frozen=True,  # False: fine-tuning, True: frozen feature extractor
     ),
     head=dict(
         type='HeatmapHead',
-        in_channels=32,
-        out_channels=20,  # ← 커스텀 keypoints 수
+        in_channels=1024,  # DINOv3 ViT-L embed_dim
+        out_channels=20,  # 커스텀 keypoints 수
+        deconv_out_channels=None,  # No deconv, use native 32x32 resolution
+        loss=dict(type='KeypointMSELoss', use_target_weight=True),
+        decoder=codec,
     ),
+    test_cfg=dict(
+        flip_test=True,
+        flip_mode='heatmap',
+        shift_heatmap=True,
+    )
 )
 
 
@@ -229,3 +165,36 @@ visualizer = dict(
     vis_backends=[
         dict(type='TensorboardVisBackend'),
     ])
+
+# hooks
+default_hooks = dict(
+    checkpoint=dict(
+        type='CheckpointHook',
+        save_best='AUC',
+        rule='greater',
+        max_keep_ckpts=5,
+        interval=2,
+        by_epoch=True,
+        save_last=False,
+    ),
+    logger=dict(type='LoggerHook', interval=100),
+)
+
+# 환경 설정
+env_cfg = dict(
+    cudnn_benchmark=False,
+    mp_cfg=dict(mp_start_method='fork', opencv_num_threads=0),
+    dist_cfg=dict(backend='nccl'),
+)
+
+log_processor = dict(
+    type='LogProcessor', 
+    window_size=50, 
+    by_epoch=True, 
+    num_digits=6
+)
+
+log_level = 'INFO'
+load_from = None
+resume = False
+

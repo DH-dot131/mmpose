@@ -10,7 +10,7 @@ default_hooks = dict(
         interval=2,
         max_keep_ckpts=5,
         rule='greater',
-        save_best='PCK',
+        save_best='AUC',
         save_last=False,
         type='CheckpointHook'),
     sampler_seed=dict(type='DistSamplerSeedHook'),

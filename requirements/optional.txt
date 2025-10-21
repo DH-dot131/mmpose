@@ -1,1 +1,2 @@
 requests
+rad-dino>=1.0.0

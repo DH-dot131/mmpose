@@ -4,9 +4,9 @@ custom_imports = dict(
     allow_failed_imports=False
 )
 
-_base_ = ['../../_base_/default_runtime.py', '../topdown_heatmap/coco/td-hm_hrnet-w32_8xb64-210e_576o-768x288.py']
+_base_ = ['../../_base_/default_runtime.py', '../topdown_heatmap/coco/td-hm_hrnet-w32_8xb64-210e_coco-384x288.py']
 
-# 현재 실144중인192onfig 파일 경로
+# 현재 실행 중인 config 파일 경로
 _config_path = inspect.getfile(inspect.currentframe())
 # 파일명만 추출 (확장자 .py 제외)
 _cfg_name = os.path.splitext(os.path.basename(_config_path))[0]
@@ -17,7 +17,7 @@ work_dir = os.path.join(
 )
 
 fp16 = dict(loss_scale='dynamic')
-auto_scale_lr = dict(base_batch_size=256, enable = False)
+auto_scale_lr = dict(base_batch_size=256, enable = True)
 
 
 dataset_type = 'CocoDataset'
@@ -25,7 +25,7 @@ data_mode = 'topdown'
 data_root = '../data/foot_ap_mmpose/'
 
 codec = dict(
-    type='MSRAHeatmap', input_size=(576, 768), heatmap_size=(144, 192), sigma=3)
+    type='MSRAHeatmap', input_size=(288, 384), heatmap_size=(72, 96), sigma=2)
 
 train_pipeline = [
     dict(type='LoadImage'),
@@ -95,7 +95,7 @@ base_dataset_val = dict(
 
 
 train_dataloader = dict(
-    batch_size=64,
+    batch_size=8,
     num_workers=8,
     persistent_workers=True,
     sampler=dict(type='DefaultSampler', shuffle=True),
@@ -111,7 +111,7 @@ train_dataloader = dict(
 )
 
 val_dataloader = dict(
-    batch_size=1,
+    batch_size=8,
     num_workers=8,
     sampler=dict(type='DefaultSampler', shuffle=False),
     dataset=dict(
@@ -157,7 +157,7 @@ train_cfg = dict(max_epochs=100, val_interval=1)
 # optimizer
 optim_wrapper = dict(optimizer=dict(
     type='AdamW',
-    lr=1e-4,
+    lr=1e-2,
     weight_decay=0.05,
 ))
 

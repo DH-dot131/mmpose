@@ -24,14 +24,15 @@ dataset_type = 'CocoDataset'
 data_mode = 'topdown'
 data_root = '../data/foot_ap_mmpose/'
 
-# DINOv3 ViT-L/16는 patch_size=16이므로 512x512 -> 32x32 feature map
+# DINOv3 ViT-L/16는 patch_size=16이므로 480x640 -> 30x40 feature map
+# 원본 비율(가로:세로 = 3:4)을 유지하기 위해 input_size를 3:4 비율로 설정
 codec = dict(
-    type='MSRAHeatmap', input_size=(512, 512), heatmap_size=(32, 32), sigma=3)
+    type='MSRAHeatmap', input_size=(480, 640), heatmap_size=(30, 40), sigma=3)
 
 train_pipeline = [
     dict(type='LoadImage'),
     dict(type='GetBBoxCenterScale'),
-    dict(type='RandomFlip', direction='horizontal'),
+    dict(type='RandomFlip', direction=['horizontal', 'vertical']),
     dict(type='RandomBBoxTransform'),
     dict(type='TopdownAffine', input_size=codec['input_size']),
     dict(type='GenerateTarget', encoder=codec),
@@ -46,7 +47,7 @@ val_pipeline = [
 ]
 
 train_dataloader = dict(
-    batch_size=32,
+    batch_size=8,
     num_workers=8,
     persistent_workers=True,
     sampler=dict(type='DefaultSampler', shuffle=True),
@@ -62,7 +63,7 @@ train_dataloader = dict(
 )
 
 val_dataloader = dict(
-    batch_size=32,
+    batch_size=8,
     num_workers=8,
     persistent_workers=True,
     sampler=dict(type='DefaultSampler', shuffle=False),
@@ -98,7 +99,8 @@ test_dataloader = dict(
 val_evaluator = [
     dict(type='NME',norm_mode = 'keypoint_distance', keypoint_indices = [0,17], collect_device='gpu'),
     dict(type='AUC', collect_device = 'gpu'), 
-    dict(type='PCKAccuracy', collect_device = 'gpu'),
+    dict(type='PCKAccuracy', collect_device = 'gpu', thr=0.005),
+    dict(type='EPE', collect_device='gpu'),
 ]
 test_evaluator = val_evaluator
 
@@ -108,10 +110,11 @@ val_cfg = dict()
 test_cfg = dict()
 
 # optimizer
+# LoRA fine-tuning은 더 작은 learning rate를 사용하는 것이 일반적
 optim_wrapper = dict(optimizer=dict(
     type='AdamW',
-    lr=1e-3,
-    weight_decay=0.05,
+    lr=1e-3,  # LoRA는 보통 1e-3 ~ 1e-4 정도 사용
+    weight_decay=0.01,  # LoRA는 weight decay를 작게 설정
 ))
 
 param_scheduler = [
@@ -139,9 +142,16 @@ model = dict(
         std=[1., 1., 1.],
         bgr_to_rgb=True),
     backbone=dict(
-        type='DINOv3',
+        type='DINOv3',  # LoRA 지원 통합됨
         pretrained='facebook/dinov3-vitl16-pretrain-lvd1689m',
-        frozen=True,  # False: fine-tuning, True: frozen feature extractor
+        frozen=True,  # Base model은 frozen, LoRA만 학습
+        lora_config=dict(
+            r=16,                    # LoRA rank (낮을수록 파라미터 적음, 8/16/32 등)
+            lora_alpha=32,           # LoRA alpha (scaling factor, 보통 r의 2배)
+            target_modules=['qkv', 'proj'],  # LoRA를 적용할 모듈 (ViT의 attention layers)
+            lora_dropout=0.1,       # LoRA dropout
+            bias='none',            # Bias는 학습하지 않음
+        ),
     ),
     head=dict(
         type='HeatmapHead',

@@ -77,6 +77,10 @@ def parse_args():
         '--show-progress',
         action='store_true',
         help='Display the progress bar during inference.')
+    parser.add_argument(
+        '--show-kpt-idx',
+        action='store_true',
+        help='Display the index of keypoints.')
 
     # The default arguments for prediction filtering differ for top-down
     # and bottom-up models. We assign the default arguments according to the

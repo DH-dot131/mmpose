@@ -69,6 +69,7 @@ class Pose2DInferencer(BaseMMPoseInferencer):
         'skeleton_style',
         'draw_heatmap',
         'black_background',
+        'show_kpt_idx',
     }
     postprocess_kwargs: set = {'pred_out_dir', 'return_datasample'}
 
@@ -184,6 +185,22 @@ class Pose2DInferencer(BaseMMPoseInferencer):
                 bboxes = bboxes[np.logical_and(
                     label_mask, pred_instance.scores > bbox_thr)]
                 bboxes = bboxes[nms(bboxes, nms_thr)]
+
+                # clip bboxes to image boundary to avoid padding outside image
+                if len(bboxes) > 0:
+                    if isinstance(input, str):
+                        _img_for_shape = mmcv.imread(input)
+                        h, w = _img_for_shape.shape[:2]
+                    else:
+                        h, w = input.shape[:2]
+                    # clip (x1, y1, x2, y2) to [0, w-1] / [0, h-1]
+                    bboxes[:, 0] = np.clip(bboxes[:, 0], 0, w - 1)  # x1
+                    bboxes[:, 1] = np.clip(bboxes[:, 1], 0, h - 1)  # y1
+                    bboxes[:, 2] = np.clip(bboxes[:, 2], 0, w - 1)  # x2
+                    bboxes[:, 3] = np.clip(bboxes[:, 3], 0, h - 1)  # y2
+                    # remove boxes with non-positive area after clipping
+                    valid = (bboxes[:, 2] > bboxes[:, 0]) & (bboxes[:, 3] > bboxes[:, 1])
+                    bboxes = bboxes[valid]
 
             data_infos = []
             if len(bboxes) > 0:

@@ -28,6 +28,16 @@ class DINOv3(BaseBackbone):
             Default: True
         output_cls_token (bool): If True, also return the CLS token.
             Default: False
+        lora_config (dict, optional): LoRA configuration. If None, LoRA is not applied.
+            Default: None
+            Example:
+                lora_config=dict(
+                    r=16,                    # LoRA rank
+                    lora_alpha=32,           # LoRA alpha (scaling factor)
+                    target_modules=['qkv', 'proj'],  # Modules to apply LoRA
+                    lora_dropout=0.1,       # LoRA dropout
+                    bias='none',            # Bias handling: 'none', 'all', 'lora_only'
+                )
         init_cfg (dict or list[dict], optional): Initialization config dict.
             Default: None
             
@@ -46,6 +56,7 @@ class DINOv3(BaseBackbone):
         pretrained: str = 'facebook/dinov3-vitl16-pretrain-lvd1689m',
         frozen: bool = True,
         output_cls_token: bool = False,
+        lora_config: Optional[dict] = None,
         init_cfg: Optional[dict] = None
     ):
         super().__init__(init_cfg=init_cfg)
@@ -53,6 +64,7 @@ class DINOv3(BaseBackbone):
         self.pretrained = pretrained
         self.frozen = frozen
         self.output_cls_token = output_cls_token
+        self.lora_config = lora_config
         
         # Import transformers library
         try:
@@ -66,28 +78,84 @@ class DINOv3(BaseBackbone):
         self.model = AutoModel.from_pretrained(pretrained)
         self.processor = AutoImageProcessor.from_pretrained(pretrained)
         
+        # Apply LoRA if config is provided
+        if lora_config is not None:
+            try:
+                from peft import LoraConfig, get_peft_model, TaskType
+            except ImportError:
+                raise ImportError(
+                    'Please install peft library for LoRA support: pip install peft'
+                )
+            
+            # Default LoRA config values
+            lora_r = lora_config.get('r', 16)
+            lora_alpha = lora_config.get('lora_alpha', 32)
+            target_modules = lora_config.get('target_modules', ['qkv', 'proj'])
+            lora_dropout = lora_config.get('lora_dropout', 0.1)
+            bias = lora_config.get('bias', 'none')
+            
+            # Create LoRA config
+            peft_config = LoraConfig(
+                task_type=TaskType.FEATURE_EXTRACTION,
+                r=lora_r,
+                lora_alpha=lora_alpha,
+                target_modules=target_modules,
+                lora_dropout=lora_dropout,
+                bias=bias,
+            )
+            
+            # Apply LoRA to the model
+            self.model = get_peft_model(self.model, peft_config)
+            
+            # Print trainable parameters
+            trainable_params = sum(p.numel() for p in self.model.parameters() if p.requires_grad)
+            total_params = sum(p.numel() for p in self.model.parameters())
+            print(f"LoRA 적용 완료:")
+            print(f"  - Trainable parameters: {trainable_params:,} ({100 * trainable_params / total_params:.2f}%)")
+            print(f"  - Total parameters: {total_params:,}")
+            print(f"  - LoRA rank (r): {lora_r}")
+            print(f"  - LoRA alpha: {lora_alpha}")
+            print(f"  - Target modules: {target_modules}")
+        
         # Get model configuration
-        config = self.model.config
+        if hasattr(self.model, 'config'):
+            config = self.model.config
+        else:
+            # If LoRA is applied, get config from base model
+            if hasattr(self.model, 'get_base_model'):
+                config = self.model.get_base_model().config
+            else:
+                config = self.model.config
+        
         self.embed_dim = config.hidden_size
         self.patch_size = config.patch_size
         self.num_registers = getattr(config, 'num_register_tokens', 4)
         
-        # Freeze backbone if specified
+        # Freeze backbone if specified (LoRA params will still be trainable)
         if self.frozen:
             self._freeze_backbone()
             
     def _freeze_backbone(self):
-        """Freeze all parameters in the backbone."""
-        for param in self.model.parameters():
-            param.requires_grad = False
+        """Freeze backbone parameters, but keep LoRA parameters trainable."""
+        if self.lora_config is not None:
+            # If LoRA is applied, only freeze non-LoRA parameters
+            for name, param in self.model.named_parameters():
+                if 'lora' not in name.lower():
+                    param.requires_grad = False
+        else:
+            # If no LoRA, freeze all parameters
+            for param in self.model.parameters():
+                param.requires_grad = False
             
     def init_weights(self):
         """Initialize weights.
         
         Since we use pre-trained weights from Hugging Face,
         we don't need custom initialization.
+        LoRA weights are initialized by peft library.
         """
         # Pre-trained weights are already loaded in __init__
+        # LoRA weights are initialized by peft
         pass
     
     def _calculate_output_size(self, input_size: Tuple[int, int]) -> Tuple[int, int]:
@@ -120,10 +188,10 @@ class DINOv3(BaseBackbone):
         """
         batch_size, _, input_h, input_w = x.shape
         
-        # Forward through DINOv3
+        # Forward through DINOv3 (with LoRA if applied)
         # DINOv3's processor handles input normalization automatically
         # It expects images in [0, 255] range and will normalize internally
-        with torch.set_grad_enabled(not self.frozen):
+        with torch.set_grad_enabled(not self.frozen or self.lora_config is not None):
             outputs = self.model(pixel_values=x)
         
         # Extract features
@@ -161,8 +229,19 @@ class DINOv3(BaseBackbone):
         super().train(mode)
         
         # Keep backbone frozen in both train and eval mode if specified
+        # But LoRA parameters should remain trainable
         if self.frozen:
-            self.model.eval()
-            for param in self.model.parameters():
-                param.requires_grad = False
+            if self.lora_config is not None:
+                # With LoRA: set base model to eval, but keep LoRA trainable
+                if hasattr(self.model, 'get_base_model'):
+                    self.model.get_base_model().eval()
+                # Ensure LoRA params are trainable
+                for name, param in self.model.named_parameters():
+                    if 'lora' in name.lower():
+                        param.requires_grad = True
+            else:
+                # Without LoRA: freeze everything
+                self.model.eval()
+                for param in self.model.parameters():
+                    param.requires_grad = False
 

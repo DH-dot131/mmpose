@@ -76,6 +76,7 @@ class Pose3DInferencer(BaseMMPoseInferencer):
         'num_instances',
         'kpt_thr',
         'vis_out_dir',
+        'show_kpt_idx',
     }
     postprocess_kwargs: set = {'pred_out_dir', 'return_datasample'}
 

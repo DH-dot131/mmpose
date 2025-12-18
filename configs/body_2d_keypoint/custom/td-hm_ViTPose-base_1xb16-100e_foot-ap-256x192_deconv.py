@@ -1,10 +1,10 @@
 import os, inspect
 custom_imports = dict(
-    imports=['mmpose.datasets.kfold_dataset'],
+    imports=['mmpose.datasets.kfold_dataset', 'mmpose.engine.optim_wrappers.layer_decay_optim_wrapper'],
     allow_failed_imports=False
 )
 
-_base_ = ['../../_base_/default_runtime.py', '../topdown_heatmap/coco/td-hm_hrnet-w32_8xb64-210e_coco-384x288.py']
+_base_ = ['../../_base_/default_runtime.py']
 
 # 현재 실행 중인 config 파일 경로
 _config_path = inspect.getfile(inspect.currentframe())
@@ -17,15 +17,14 @@ work_dir = os.path.join(
 )
 
 fp16 = dict(loss_scale='dynamic')
-auto_scale_lr = dict(base_batch_size=256, enable = True)
-
+auto_scale_lr = dict(base_batch_size=512)
 
 dataset_type = 'CocoDataset'
 data_mode = 'topdown'
 data_root = '../data/foot_ap_mmpose/'
 
 codec = dict(
-    type='MSRAHeatmap', input_size=(288, 384), heatmap_size=(144, 192), sigma=2)
+    type='UDPHeatmap', input_size=(192, 256), heatmap_size=(96, 128), sigma=4)
 
 train_pipeline = [
     dict(type='LoadImage'),
@@ -33,7 +32,7 @@ train_pipeline = [
     dict(type='RandomFlip', direction=['horizontal', 'vertical']),
     #dict(type='RandomHalfBody'),
     dict(type='RandomBBoxTransform'),
-    dict(type='TopdownAffine', input_size=codec['input_size']),
+    dict(type='TopdownAffine', input_size=codec['input_size'], use_udp=True),
     dict(type='GenerateTarget', encoder=codec),
     dict(type='PackPoseInputs'),
 ]
@@ -41,7 +40,7 @@ train_pipeline = [
 val_pipeline = [
     dict(type='LoadImage'),
     dict(type='GetBBoxCenterScale'),
-    dict(type='TopdownAffine', input_size=codec['input_size']),
+    dict(type='TopdownAffine', input_size=codec['input_size'], use_udp=True),
     dict(type='PackPoseInputs')
 ]
 
@@ -95,7 +94,7 @@ base_dataset_val = dict(
 
 
 train_dataloader = dict(
-    batch_size=8,
+    batch_size=16,
     num_workers=8,
     persistent_workers=True,
     sampler=dict(type='DefaultSampler', shuffle=True),
@@ -111,7 +110,7 @@ train_dataloader = dict(
 )
 
 val_dataloader = dict(
-    batch_size=8,
+    batch_size=16,
     num_workers=8,
     sampler=dict(type='DefaultSampler', shuffle=False),
     dataset=dict(
@@ -120,6 +119,7 @@ val_dataloader = dict(
         data_mode=data_mode,
         ann_file='annotations_val.json',
         data_prefix=dict(img='images/'),
+        pipeline=val_pipeline,
         metainfo=dict(from_file='configs/_base_/datasets/custom_20_keypoints_metainfo.py'),
         bbox_file = None
     ),
@@ -135,6 +135,7 @@ test_dataloader = dict(
         data_mode=data_mode,
         ann_file='annotations_test.json',
         data_prefix=dict(img='images/'),
+        pipeline=val_pipeline,
         metainfo=dict(from_file='configs/_base_/datasets/custom_20_keypoints_metainfo.py'),
         bbox_file = None
     )
@@ -155,29 +156,36 @@ test_evaluator = val_evaluator
 train_cfg = dict(max_epochs=100, val_interval=2)
 
 # optimizer
-optim_wrapper = dict(optimizer=dict(
-    type='Adam',
-    lr=1e-2,
-))
+optim_wrapper = dict(
+    optimizer=dict(
+        type='AdamW', lr=5e-4, betas=(0.9, 0.999), weight_decay=0.1),
+    paramwise_cfg=dict(
+        num_layers=12,
+        layer_decay_rate=0.75,
+        custom_keys={
+            'bias': dict(decay_multi=0.0),
+            'pos_embed': dict(decay_mult=0.0),
+            'relative_position_bias_table': dict(decay_mult=0.0),
+            'norm': dict(decay_mult=0.0),
+        },
+    ),
+    constructor='LayerDecayOptimWrapperConstructor',
+    clip_grad=dict(max_norm=1., norm_type=2),
+)
 
+# learning policy
 param_scheduler = [
     dict(
-        type='LinearLR',
-        start_factor=0.001,   # 초기 LR = base_lr × 0.001
-        end=5,                # 10 epoch 동안 warm-up
-        by_epoch=True
-    ),
+        type='LinearLR', begin=0, end=500, start_factor=0.001,
+        by_epoch=False),  # warm-up
     dict(
-        type='CosineAnnealingLR',
-        T_max=95,             # 95 epoch 동안 cosine decay
-        begin=5,              # 5 epoch부터 시작
-        end=100,              # 전체 학습은 100 epoch
-        by_epoch=True
-    )
+        type='MultiStepLR',
+        begin=0,
+        end=100,
+        milestones=[80, 95],
+        gamma=0.1,
+        by_epoch=True)
 ]
-
-
-norm_cfg = dict(type='SyncBN', requires_grad=True)
 
 
 model = dict(
@@ -188,49 +196,33 @@ model = dict(
         std=[58.395, 57.12, 57.375],
         bgr_to_rgb=True),
     backbone=dict(
-        type='HRNet',
-        extra=dict(
-            stage1=dict(
-                num_modules=1,
-                num_branches=1,
-                block='BOTTLENECK',
-                num_blocks=(4, ),
-                num_channels=(64, )),
-            stage2=dict(
-                num_modules=1,
-                num_branches=2,
-                block='BASIC',
-                num_blocks=(4, 4),
-                num_channels=(32, 64)),
-            stage3=dict(
-                num_modules=4,
-                num_branches=3,
-                block='BASIC',
-                num_blocks=(4, 4, 4),
-                num_channels=(32, 64, 128)),
-            stage4=dict(
-                num_modules=3,
-                num_branches=4,
-                block='BASIC',
-                num_blocks=(4, 4, 4, 4),
-                num_channels=(32, 64, 128, 256))),
-        frozen_stages=-1,
+        type='mmpretrain.VisionTransformer',
+        arch='base',
+        img_size=(256, 192),
+        patch_size=16,
+        qkv_bias=True,
+        drop_path_rate=0.3,
+        with_cls_token=False,
+        out_type='featmap',
+        patch_cfg=dict(padding=2),
+        init_cfg=dict(
+            type='Pretrained',
+            checkpoint='https://download.openmmlab.com/mmpose/'
+            'v1/pretrained_models/mae_pretrain_vit_base_20230913.pth'),
     ),
-    # head=dict(
-    #     type='HeatmapHead',
-    #     in_channels=32,
-    #     out_channels=20,  # ← 커스텀 keypoints 수
-    #     decoder=codec
-    # ),
     head=dict(
-    type='HeatmapHead',
-    in_channels=32,
-    out_channels=20,
-    deconv_out_channels=(256,),  # deconv 1개 추가
-    deconv_kernel_sizes=(4,),    # kernel size 4
-    decoder=codec,
-    )
-)
+        type='HeatmapHead',
+        in_channels=768,
+        out_channels=20,  # ← 커스텀 keypoints 수
+        deconv_out_channels=(256, 256, 256),  # deconv 3개로 8배 upsampling (12x16 -> 24x32 -> 48x64 -> 96x128)
+        deconv_kernel_sizes=(4, 4, 4),
+        loss=dict(type='KeypointMSELoss', use_target_weight=True),
+        decoder=codec),
+    test_cfg=dict(
+        flip_test=True,
+        flip_mode='heatmap',
+        shift_heatmap=False,
+    ))
 
 
 visualizer = dict(

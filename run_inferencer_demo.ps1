@@ -5,22 +5,21 @@
 $OutputEncoding = [System.Text.Encoding]::UTF8
 
 # 입력 디렉토리
-$INPUT_DIR = "L:\research\project\foot_ap_data_inspection\data\Foot_AP_L\not_labeled\EXT_20250919_95_clahe_jpg"
-
+$INPUT_DIR = "L:\research\project\foot_ap_data_inspection\HVAngleEst\V5\HVAngleEst\images_clahe"
+# $INPUT_DIR = "L:\research\project\foot_ap_data_inspection\data\foot_ap_mmpose\images"
 # 출력 디렉토리
-$OUTPUT_DIR = "L:\research\project\foot_ap_data_inspection\data\Foot_AP_L\not_labeled\EXT_20250919_95_clahe_jpg_predict"
-
+$OUTPUT_DIR = "L:\research\project\foot_ap_data_inspection\HVAngleEst\V5\HVAngleEst\images_clahe_predict"
+# $OUTPUT_DIR = "data\Foot_AP_L\not_labeled/images_predict_M2"
 # pose2d 설정 파일
 $POSE2D_CONFIG = "L:\research\project\foot_ap_data_inspection\mmpose\configs\body_2d_keypoint\custom\td-hm-hrnet-w32-adam-lr1e-2-warm100batch-bs8-ep100-coco-384x288_AP-base256.py"
-
+# $POSE2D_CONFIG = "L:\research\project\foot_ap_data_inspection\work_dirs\foot_ap\train\hrnet_custom_24_384x288.py"
 # pose2d 가중치 파일
-$POSE2D_WEIGHTS = "L:\research\project\foot_ap_data_inspection\work_dirs\foot_ap\td-hm-hrnet-w32-adam-lr1e-2-warm100batch-bs8-ep100-coco-384x288_AP-base256\best_AUC_epoch_100.pth"
-
+$POSE2D_WEIGHTS = "L:\research\project\foot_ap_data_inspection\work_dirs\foot_ap\td-hm-hrnet-w32-adam-lr1e-2-warm100batch-bs8-ep100-coco-384x288_AP-base256_20251215\best_EPE_epoch_72.pth"
+# $POSE2D_WEIGHTS = "L:\research\project\foot_ap_data_inspection\work_dirs\foot_ap\train\best_NME_epoch_90.pth"
 # detection 모델 설정 파일
-$DET_MODEL = "L:\research\project\foot_ap_data_inspection\mmdetection\configs\yolox\yolox_s_foot_xray_less_aug.py"
-
+$DET_MODEL = "L:\research\project\foot_ap_data_inspection\work_dirs\yolox_s_foot_xray_less_aug\yolox_s_foot_xray_less_aug.py"
 # detection 가중치 파일
-$DET_WEIGHTS = "L:\research\project\foot_ap_data_inspection\work_dirs\yolox_s_foot_xray_less_aug\epoch_200.pth"
+$DET_WEIGHTS = "L:\research\project\foot_ap_data_inspection\work_dirs\yolox_s_foot_xray_less_aug\epoch_90.pth"
 
 # 출력 디렉토리 생성
 if (!(Test-Path $OUTPUT_DIR)) {
@@ -39,6 +38,7 @@ python demo/inferencer_demo.py `
     --det-cat-ids 0 1 `
     --draw-bbox `
     --vis-out-dir $OUTPUT_DIR `
-    --pred-out-dir $OUTPUT_DIR
+    --pred-out-dir $OUTPUT_DIR `
+    --show-kpt-idx
 
 Write-Host "Inference completed! Results saved to: $OUTPUT_DIR"

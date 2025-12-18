@@ -4,7 +4,7 @@ custom_imports = dict(
     allow_failed_imports=False
 )
 
-_base_ = ['../../_base_/default_runtime.py', '../topdown_heatmap/coco/td-hm_hrnet-w32_8xb64-210e_coco-384x288.py']
+_base_ = ['../../_base_/default_runtime.py', '../topdown_heatmap/coco/td-hm_hrnet-w48_8xb32-210e_coco-384x288.py']
 
 # 현재 실행 중인 config 파일 경로
 _config_path = inspect.getfile(inspect.currentframe())
@@ -25,12 +25,12 @@ data_mode = 'topdown'
 data_root = '../data/foot_ap_mmpose/'
 
 codec = dict(
-    type='MSRAHeatmap', input_size=(288, 384), heatmap_size=(72, 96), sigma=2)
+    type='MSRAHeatmap', input_size=(288, 384), heatmap_size=(144, 192), sigma=2)
 
 train_pipeline = [
     dict(type='LoadImage'),
     dict(type='GetBBoxCenterScale'),
-    dict(type='RandomFlip', direction='horizontal'),
+    dict(type='RandomFlip', direction=['horizontal', 'vertical']),
     #dict(type='RandomHalfBody'),
     dict(type='RandomBBoxTransform'),
     dict(type='TopdownAffine', input_size=codec['input_size']),
@@ -144,34 +144,33 @@ test_dataloader = dict(
 #test_evaluator = dict(type='CocoMetric', ann_file=data_root + 'annotations_test.json')
 
 val_evaluator = [
-    dict(type='EPE', collect_device='gpu'),
     dict(type='NME',norm_mode = 'keypoint_distance', keypoint_indices = [0,17], collect_device='gpu'),
     dict(type='AUC', collect_device = 'gpu'), 
+    dict(type='EPE', collect_device='gpu'),
     dict(type='PCKAccuracy',thr=0.005, collect_device = 'gpu'),
     ]
 test_evaluator = val_evaluator
 
 
-train_cfg = dict(max_epochs=100, val_interval=1)
+train_cfg = dict(max_epochs=100, val_interval=2)
 
 # optimizer
 optim_wrapper = dict(optimizer=dict(
-    type='AdamW',
+    type='Adam',
     lr=1e-2,
-    weight_decay=0.05,
 ))
 
 param_scheduler = [
     dict(
         type='LinearLR',
-        start_factor=0.01,   # 초기 LR = base_lr × 0.001
-        end=3,                # 10 epoch 동안 warm-up
+        start_factor=0.001,   # 초기 LR = base_lr × 0.001
+        end=5,                # 10 epoch 동안 warm-up
         by_epoch=True
     ),
     dict(
         type='CosineAnnealingLR',
-        T_max=97,             # 95 epoch 동안 cosine decay
-        begin=3,              # 5 epoch부터 시작
+        T_max=95,             # 95 epoch 동안 cosine decay
+        begin=5,              # 5 epoch부터 시작
         end=100,              # 전체 학습은 100 epoch
         by_epoch=True
     )
@@ -202,26 +201,35 @@ model = dict(
                 num_branches=2,
                 block='BASIC',
                 num_blocks=(4, 4),
-                num_channels=(32, 64)),
+                num_channels=(48, 96)),
             stage3=dict(
                 num_modules=4,
                 num_branches=3,
                 block='BASIC',
                 num_blocks=(4, 4, 4),
-                num_channels=(32, 64, 128)),
+                num_channels=(48, 96, 192)),
             stage4=dict(
                 num_modules=3,
                 num_branches=4,
                 block='BASIC',
                 num_blocks=(4, 4, 4, 4),
-                num_channels=(32, 64, 128, 256))),
+                num_channels=(48, 96, 192, 384))),
         frozen_stages=-1,
     ),
+    # head=dict(
+    #     type='HeatmapHead',
+    #     in_channels=32,
+    #     out_channels=20,  # ← 커스텀 keypoints 수
+    #     decoder=codec
+    # ),
     head=dict(
-        type='HeatmapHead',
-        in_channels=32,
-        out_channels=20,  # ← 커스텀 keypoints 수
-    ),
+    type='HeatmapHead',
+    in_channels=48,
+    out_channels=20,
+    deconv_out_channels=(256,),  # deconv 1개 추가
+    deconv_kernel_sizes=(4,),    # kernel size 4
+    decoder=codec,
+    )
 )
 
 
@@ -231,3 +239,19 @@ visualizer = dict(
     vis_backends=[
         dict(type='TensorboardVisBackend'),
     ])
+
+# custom_hooks에 추가
+custom_hooks = [
+    dict(type='SyncBuffersHook'),
+    dict(
+        type='EnhancedTensorBoardHook',
+        log_grad_norm=True,
+        log_weight_hist=True,
+        log_val_metrics=True,
+        log_train_images=True,
+        log_val_images=True,
+        grad_norm_interval=100,
+        train_image_interval=500,
+    ),
+]
+

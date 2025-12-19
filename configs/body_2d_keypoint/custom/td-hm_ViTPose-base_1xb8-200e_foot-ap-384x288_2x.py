@@ -24,13 +24,13 @@ data_mode = 'topdown'
 data_root = '../data/foot_ap_mmpose/'
 
 codec = dict(
-    type='UDPHeatmap', input_size=(192, 256), heatmap_size=(96, 128), sigma=4)
+    type='UDPHeatmap', input_size=(288, 384), heatmap_size=(144, 192), sigma=2)
 
 train_pipeline = [
     dict(type='LoadImage'),
     dict(type='GetBBoxCenterScale'),
     dict(type='RandomFlip', direction=['horizontal', 'vertical']),
-    #dict(type='RandomHalfBody'),
+    #ict(type='RandomHalfBody'),
     dict(type='RandomBBoxTransform'),
     dict(type='TopdownAffine', input_size=codec['input_size'], use_udp=True),
     dict(type='GenerateTarget', encoder=codec),
@@ -94,7 +94,7 @@ base_dataset_val = dict(
 
 
 train_dataloader = dict(
-    batch_size=16,
+    batch_size=8,
     num_workers=8,
     persistent_workers=True,
     sampler=dict(type='DefaultSampler', shuffle=True),
@@ -110,7 +110,7 @@ train_dataloader = dict(
 )
 
 val_dataloader = dict(
-    batch_size=16,
+    batch_size=8,
     num_workers=8,
     sampler=dict(type='DefaultSampler', shuffle=False),
     dataset=dict(
@@ -153,7 +153,7 @@ val_evaluator = [
 test_evaluator = val_evaluator
 
 
-train_cfg = dict(max_epochs=100, val_interval=2)
+train_cfg = dict(max_epochs=200, val_interval=2)
 
 # optimizer
 optim_wrapper = dict(
@@ -181,8 +181,8 @@ param_scheduler = [
     dict(
         type='MultiStepLR',
         begin=0,
-        end=100,
-        milestones=[80, 95],
+        end=200,
+        milestones=[160, 190],
         gamma=0.1,
         by_epoch=True)
 ]
@@ -198,7 +198,7 @@ model = dict(
     backbone=dict(
         type='mmpretrain.VisionTransformer',
         arch='base',
-        img_size=(256, 192),
+        img_size=(384, 288),
         patch_size=16,
         qkv_bias=True,
         drop_path_rate=0.3,
@@ -214,7 +214,7 @@ model = dict(
         type='HeatmapHead',
         in_channels=768,
         out_channels=20,  # ← 커스텀 keypoints 수
-        deconv_out_channels=(256, 256, 256),  # deconv 3개로 8배 upsampling (12x16 -> 24x32 -> 48x64 -> 96x128)
+        deconv_out_channels=(256, 256, 256),  # deconv 3개로 8배 upsampling (18x24 -> 36x48 -> 72x96 -> 144x192)
         deconv_kernel_sizes=(4, 4, 4),
         loss=dict(type='KeypointMSELoss', use_target_weight=True),
         decoder=codec),

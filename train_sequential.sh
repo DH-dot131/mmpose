@@ -12,9 +12,8 @@ export LC_ALL=C.UTF-8
 
 # List of config files to train (executed in order)
 CONFIG_FILES=(
-    "configs/body_2d_keypoint/custom/td-hm-hrnet-w48-adam-lr1e-2-warm100batch-bs8-ep100-coco-384x288_AP-base256.py"
-    "configs/body_2d_keypoint/custom/td-hm_ViTPose-base_1xb8-100e_foot-ap-384x288.py"
-    "configs/body_2d_keypoint/custom/td-hm_ViTPose-base_1xb16-100e_foot-ap-256x192.py"
+    "configs/body_2d_keypoint/custom/td-hm_ViTPose-base_1xb8-200e_foot-ap-384x288_2x.py"
+    "configs/body_2d_keypoint/custom/td-hm_ViTPose-base_1xb8-200e_foot-ap-384x288_4x.py"
     # Add more as needed
 )
 
@@ -33,6 +32,10 @@ CPU_LOAD_THRESHOLD=80  # Maximum CPU load (%) to allow parallel execution
 
 # Execution mode: "auto", "sequential", or "parallel"
 EXECUTION_MODE="auto"
+
+# Show training output in real-time (true/false)
+# If true, training output will be displayed on screen while running
+SHOW_OUTPUT=true
 
 # Log file directory
 LOG_DIR="logs"
@@ -58,7 +61,7 @@ write_log() {
     local level="${2:-INFO}"
     local timestamp=$(date +"%Y-%m-%d %H:%M:%S")
     local log_message="[${timestamp}] [${level}] ${message}"
-    echo "$log_message"
+    echo "$log_message" >&2  # Output to stderr to avoid interfering with function return values
     echo "$log_message" >> "$LOG_FILE"
 }
 
@@ -287,14 +290,37 @@ start_training() {
     local start_time=$(date +%s)
     
     if [ "$is_background" = "true" ]; then
-        # Background execution
+        # Background execution (parallel mode)
+        # Output is saved to log file, can be viewed with: tail -f "$job_log_file"
         eval "$train_cmd" >> "$job_log_file" 2>&1 &
         local pid=$!
+        if [ "$SHOW_OUTPUT" = "true" ]; then
+            write_log "Background job started (PID: ${pid})" "INFO"
+            write_log "View output with: tail -f ${job_log_file}" "INFO"
+        fi
         echo "$pid"
         return 0
     else
         # Foreground execution
-        if eval "$train_cmd"; then
+        if [ "$SHOW_OUTPUT" = "true" ]; then
+            # Show output in real-time using tee
+            write_log "Training output:" "INFO"
+            write_log "----------------------------------------" "INFO"
+            if eval "$train_cmd" 2>&1 | tee "$job_log_file"; then
+                local exit_code=${PIPESTATUS[0]}
+            else
+                local exit_code=$?
+            fi
+        else
+            # Silent execution (only log file)
+            if eval "$train_cmd" >> "$job_log_file" 2>&1; then
+                local exit_code=0
+            else
+                local exit_code=$?
+            fi
+        fi
+        
+        if [ $exit_code -eq 0 ]; then
             local end_time=$(date +%s)
             local duration=$((end_time - start_time))
             local hours=$((duration / 3600))
@@ -309,8 +335,9 @@ start_training() {
             
             return 0
         else
+            write_log "----------------------------------------" "ERROR"
             write_log "Error occurred: [${index}/${total}] ${config_file}" "ERROR"
-            write_log "Error message: Training command failed with exit code $?" "ERROR"
+            write_log "Error message: Training command failed with exit code ${exit_code}" "ERROR"
             write_log "========================================" "ERROR"
             return 1
         fi

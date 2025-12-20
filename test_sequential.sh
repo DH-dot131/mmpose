@@ -14,7 +14,7 @@ export LC_ALL=C.UTF-8
 WORK_DIR_BASE="../work_dirs/foot_ap"
 
 # Target epoch to check completion (default: 100)
-TARGET_EPOCH=100
+TARGET_EPOCH=200
 
 # Checkpoint pattern to search for
 CHECKPOINT_PATTERN="best_EPE_epoch_*.pth"
@@ -137,13 +137,15 @@ check_training_completed() {
     done
     
     # Alternative: Check for checkpoint files with epoch >= target_epoch
+    # Check for exact epoch match first
     local checkpoint_files=$(find "$work_dir" -name "epoch_${target_epoch}.pth" -o -name "*epoch_${target_epoch}*.pth" 2>/dev/null)
     if [ -n "$checkpoint_files" ]; then
         return 0
     fi
     
     # Check if latest checkpoint epoch >= target_epoch
-    local latest_epoch=$(find "$work_dir" -name "epoch_*.pth" 2>/dev/null | \
+    # Include both epoch_*.pth and best_EPE_epoch_*.pth files
+    local latest_epoch=$(find "$work_dir" -name "epoch_*.pth" -o -name "best_EPE_epoch_*.pth" 2>/dev/null | \
         sed -E 's/.*epoch_([0-9]+)\.pth/\1/' | sort -n | tail -n1)
     if [ -n "$latest_epoch" ] && [ "$latest_epoch" -ge "$target_epoch" ]; then
         return 0
@@ -423,7 +425,8 @@ start_testing() {
     if [ "$is_background" = "true" ]; then
         # Background execution (parallel mode)
         # Output is saved to log file, can be viewed with: tail -f "$job_log_file"
-        eval "$test_cmd" >> "$job_log_file" 2>&1 &
+        # Use bash -c to ensure the process is a direct child of this shell
+        bash -c "$test_cmd" >> "$job_log_file" 2>&1 &
         local pid=$!
         if [ "$SHOW_OUTPUT" = "true" ]; then
             write_log "Background job started (PID: ${pid})" "INFO"

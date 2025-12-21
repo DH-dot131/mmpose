@@ -247,7 +247,7 @@ custom_hooks = [
         log_weight_hist=True,
         log_val_metrics=True,
         log_train_images=True,
-        log_val_images=True,
+        # log_val_images removed (not effective, causes large file sizes)
         grad_norm_interval=100,
         train_image_interval=500,
     ),

@@ -18,7 +18,7 @@ custom_hooks = [
         log_weight_hist=True,        # Weight histogram 로깅
         log_val_metrics=True,        # Validation metrics 로깅
         log_train_images=True,       # Training image 로깅
-        log_val_images=True,         # Validation image 로깅
+        # log_val_images removed (not effective, causes large file sizes)
         log_lr=True,                 # Learning rate 로깅
         log_model_stats=True,        # Model statistics 로깅
         

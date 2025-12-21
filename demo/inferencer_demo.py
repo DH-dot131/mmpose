@@ -1,6 +1,10 @@
 # Copyright (c) OpenMMLab. All rights reserved.
 from argparse import ArgumentParser
 from typing import Dict
+import time
+import json
+import os
+import statistics
 
 from mmpose.apis.inferencers import MMPoseInferencer, get_model_aliases
 
@@ -184,6 +188,15 @@ def parse_args():
         '--show-alias',
         action='store_true',
         help='Display all the available model aliases.')
+    parser.add_argument(
+        '--measure-speed',
+        action='store_true',
+        help='Measure inference speed for each image (for academic paper).')
+    parser.add_argument(
+        '--speed-out-file',
+        type=str,
+        default='',
+        help='Path to save speed measurement results as JSON file.')
 
     call_args = vars(parser.parse_args())
 
@@ -197,8 +210,10 @@ def parse_args():
         init_args[init_kw] = call_args.pop(init_kw)
 
     display_alias = call_args.pop('show_alias')
+    measure_speed = call_args.pop('measure_speed', False)
+    speed_out_file = call_args.pop('speed_out_file', '')
 
-    return init_args, call_args, display_alias
+    return init_args, call_args, display_alias, measure_speed, speed_out_file
 
 
 def display_model_aliases(model_aliases: Dict[str, str]) -> None:
@@ -212,14 +227,82 @@ def display_model_aliases(model_aliases: Dict[str, str]) -> None:
 
 
 def main():
-    init_args, call_args, display_alias = parse_args()
+    init_args, call_args, display_alias, measure_speed, speed_out_file = parse_args()
     if display_alias:
         model_alises = get_model_aliases(init_args['scope'])
         display_model_aliases(model_alises)
     else:
         inferencer = MMPoseInferencer(**init_args)
-        for _ in inferencer(**call_args):
-            pass
+        
+        if measure_speed:
+            # Speed measurement mode
+            inference_times = []
+            total_start_time = time.perf_counter()
+            inference_start_time = total_start_time
+            
+            for idx, result in enumerate(inferencer(**call_args)):
+                inference_end_time = time.perf_counter()
+                
+                # Calculate time for this inference
+                inference_time = inference_end_time - inference_start_time
+                inference_times.append(inference_time)
+                inference_start_time = inference_end_time
+            
+            total_end_time = time.perf_counter()
+            total_time = total_end_time - total_start_time
+            
+            # Calculate statistics
+            if len(inference_times) > 0:
+                avg_time = sum(inference_times) / len(inference_times)
+                min_time = min(inference_times)
+                max_time = max(inference_times)
+                fps = 1.0 / avg_time if avg_time > 0 else 0.0
+                
+                # Print results
+                print("\n" + "="*60)
+                print("Inference Speed Measurement Results")
+                print("="*60)
+                print(f"Total images processed: {len(inference_times)}")
+                print(f"Total time: {total_time:.4f} seconds")
+                print(f"Average time per image: {avg_time*1000:.2f} ms")
+                print(f"Min time per image: {min_time*1000:.2f} ms")
+                print(f"Max time per image: {max_time*1000:.2f} ms")
+                print(f"Average FPS: {fps:.2f}")
+                if len(inference_times) > 1:
+                    # Calculate standard deviation
+                    std_time = statistics.stdev(inference_times) * 1000
+                    print(f"Std deviation: {std_time:.2f} ms")
+                print("="*60)
+                
+                # Save to file if specified
+                if speed_out_file:
+                    speed_results = {
+                        'total_images': len(inference_times),
+                        'total_time_seconds': total_time,
+                        'average_time_ms': avg_time * 1000,
+                        'min_time_ms': min_time * 1000,
+                        'max_time_ms': max_time * 1000,
+                        'average_fps': fps,
+                        'individual_times_ms': [t * 1000 for t in inference_times]
+                    }
+                    
+                    if len(inference_times) > 1:
+                        speed_results['std_time_ms'] = statistics.stdev(inference_times) * 1000
+                    
+                    # Create directory if it doesn't exist
+                    output_dir = os.path.dirname(speed_out_file)
+                    if output_dir:
+                        os.makedirs(output_dir, exist_ok=True)
+                    
+                    with open(speed_out_file, 'w', encoding='utf-8') as f:
+                        json.dump(speed_results, f, indent=2, ensure_ascii=False)
+                    print(f"\nSpeed results saved to: {speed_out_file}")
+            else:
+                print("\nWarning: No inference times recorded.")
+        else:
+            # Normal mode without speed measurement
+            for _ in inferencer(**call_args):
+                pass
 
 
 if __name__ == '__main__':

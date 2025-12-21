@@ -44,7 +44,7 @@ class EnhancedTensorBoardHook(Hook):
         log_weight_hist (bool): Whether to log weight histograms. Defaults to True.
         log_val_metrics (bool): Whether to log validation metrics. Defaults to True.
         log_train_images (bool): Whether to log training images. Defaults to True.
-        log_val_images (bool): Whether to log validation images. Defaults to True.
+        log_val_images (bool): Whether to log validation images. Defaults to False (disabled).
         log_lr (bool): Whether to log learning rate. Defaults to True.
         log_model_stats (bool): Whether to log model statistics. Defaults to True.
         grad_norm_interval (int): Interval for logging gradient norms. Defaults to 100.
@@ -66,7 +66,7 @@ class EnhancedTensorBoardHook(Hook):
         log_weight_hist: bool = True,
         log_val_metrics: bool = True,
         log_train_images: bool = True,
-        log_val_images: bool = True,
+        log_val_images: bool = False,  # Validation images disabled by default
         log_lr: bool = True,
         log_model_stats: bool = True,
         grad_norm_interval: int = 100,
@@ -136,30 +136,56 @@ class EnhancedTensorBoardHook(Hook):
         # Try to get TensorBoard writer from vis_backends
         for backend_name, backend in self._visualizer._vis_backends.items():
             if 'tensorboard' in backend_name.lower() or 'TensorboardVisBackend' in str(type(backend)):
-                # Try to get writer from backend
-                if hasattr(backend, 'writer'):
-                    self._tb_writer = backend.writer
-                    self._tb_writer_initialized = True
-                    print_log(
-                        f'EnhancedTensorBoardHook: Found TensorBoard writer from {backend_name}',
-                        logger='current',
-                        level=logging.INFO
-                    )
-                    return self._tb_writer
-                elif hasattr(backend, '_writer'):
-                    self._tb_writer = backend._writer
-                    self._tb_writer_initialized = True
-                    print_log(
-                        f'EnhancedTensorBoardHook: Found TensorBoard writer from {backend_name}',
-                        logger='current',
-                        level=logging.INFO
-                    )
-                    return self._tb_writer
+                # Try multiple possible attribute names for writer
+                writer_attrs = ['writer', '_writer', '_tb_writer', 'tb_writer']
+                for attr in writer_attrs:
+                    if hasattr(backend, attr):
+                        writer = getattr(backend, attr)
+                        if writer is not None:
+                            self._tb_writer = writer
+                            self._tb_writer_initialized = True
+                            print_log(
+                                f'EnhancedTensorBoardHook: Found TensorBoard writer from {backend_name} (attr: {attr})',
+                                logger='current',
+                                level=logging.INFO
+                            )
+                            return self._tb_writer
+                
+                # Try to get save_dir from backend and create writer at same location
+                if hasattr(backend, 'save_dir'):
+                    save_dir = backend.save_dir
+                elif hasattr(backend, '_save_dir'):
+                    save_dir = backend._save_dir
+                else:
+                    # Default: use vis_data directory (TensorboardVisBackend default)
+                    if hasattr(runner, 'work_dir') and hasattr(runner, 'timestamp'):
+                        save_dir = os.path.join(runner.work_dir, runner.timestamp, 'vis_data')
+                    else:
+                        save_dir = None
+                
+                if save_dir:
+                    try:
+                        self._tb_writer = SummaryWriter(log_dir=save_dir)
+                        self._tb_writer_initialized = True
+                        print_log(
+                            f'EnhancedTensorBoardHook: Created TensorBoard writer at {save_dir} (same as TensorboardVisBackend)',
+                            logger='current',
+                            level=logging.INFO
+                        )
+                        return self._tb_writer
+                    except Exception as e:
+                        print_log(
+                            f'Failed to create TensorBoard writer at {save_dir}: {e}',
+                            logger='current',
+                            level=logging.DEBUG
+                        )
 
-        # If not found, try to create one from work_dir
-        if hasattr(runner, 'work_dir'):
+        # If not found, try to create one in vis_data directory (same as TensorboardVisBackend)
+        if hasattr(runner, 'work_dir') and hasattr(runner, 'timestamp'):
             try:
-                log_dir = os.path.join(runner.work_dir, runner.timestamp)
+                # Use vis_data directory to match TensorboardVisBackend
+                log_dir = os.path.join(runner.work_dir, runner.timestamp, 'vis_data')
+                os.makedirs(log_dir, exist_ok=True)
                 self._tb_writer = SummaryWriter(log_dir=log_dir)
                 self._tb_writer_initialized = True
                 print_log(
@@ -805,9 +831,8 @@ class EnhancedTensorBoardHook(Hook):
                        data_batch: dict = None,
                        outputs: Sequence[PoseDataSample] = None) -> None:
         """Called after each validation iteration."""
-        # Log validation images from first batch only
-        if self.log_val_images and batch_idx % self.val_image_interval == 0:
-            self._log_validation_image(runner, batch_idx, data_batch, outputs)
+        # Validation image logging removed (not effective, causes large file sizes)
+        pass
 
     def after_val_epoch(self, runner: Runner, metrics: Optional[Dict] = None) -> None:
         """Called after validation epoch.

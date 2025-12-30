@@ -7,6 +7,7 @@ heatmap을 추출하고 PNG 형식으로 저장합니다.
 
 import argparse
 import inspect
+import json
 import os
 import pickle
 from pathlib import Path
@@ -19,7 +20,9 @@ from mmengine.config import Config, DictAction
 from mmengine.dataset import Compose, pseudo_collate
 from mmengine.registry import init_default_scope
 from mmpose.apis.inference import inference_topdown, inference_bottomup, init_model
+from mmpose.apis.visualization import visualize
 from mmpose.registry import DATASETS
+from mmpose.visualization import PoseLocalVisualizer
 from mmpose.apis.inferencers.base_mmpose_inferencer import BaseMMPoseInferencer
 from mmpose.apis.inferencers.utils import default_det_models
 from mmpose.evaluation.functional import nms
@@ -126,6 +129,51 @@ def parse_args():
         action=DictAction,
         default={},
         help='override some settings in the used config')
+    parser.add_argument(
+        '--save-keypoints',
+        action='store_true',
+        help='save keypoint predictions to JSON files (similar to --pred-out-dir in inferencer_demo)')
+    parser.add_argument(
+        '--pred-out-dir',
+        type=str,
+        default=None,
+        help='directory to save keypoint predictions (if not specified, saves in output-dir)')
+    parser.add_argument(
+        '--vis-out-dir',
+        type=str,
+        default=None,
+        help='directory to save visualized results with keypoints drawn')
+    parser.add_argument(
+        '--draw-bbox',
+        action='store_true',
+        help='whether to draw the bounding boxes')
+    parser.add_argument(
+        '--kpt-thr',
+        type=float,
+        default=0.3,
+        help='keypoint score threshold for visualization')
+    parser.add_argument(
+        '--radius',
+        type=int,
+        default=3,
+        help='keypoint radius for visualization')
+    parser.add_argument(
+        '--thickness',
+        type=int,
+        default=1,
+        help='link thickness for visualization')
+    parser.add_argument(
+        '--show-kpt-idx',
+        type=int,
+        nargs='*',
+        default=None,
+        help='display only specific keypoint indices (1-based). Other keypoints will be hidden. Example: --show-kpt-idx 3 4 9 10 13 14')
+    parser.add_argument(
+        '--skeleton-style',
+        default='mmpose',
+        type=str,
+        choices=['mmpose', 'openpose'],
+        help='skeleton style selection')
     return parser.parse_args()
 
 
@@ -307,6 +355,63 @@ def save_combined_heatmap(combined_heatmap: np.ndarray, output_path: Path,
     
     img.save(output_path)
     return combined_colored
+
+
+def save_keypoints_json(keypoints: np.ndarray, keypoint_scores: np.ndarray,
+                        output_path: Path, metainfo: Optional[dict] = None):
+    """Keypoint 예측 결과를 JSON 파일로 저장합니다 (inferencer_demo.py 스타일).
+    
+    Args:
+        keypoints: (N, K, 2) 또는 (K, 2) 형태의 keypoint 좌표 배열
+        keypoint_scores: (N, K) 또는 (K,) 형태의 keypoint score 배열
+        output_path: 저장할 JSON 파일 경로
+        metainfo: 메타 정보 딕셔너리 (img_path, img_id 등)
+    """
+    # numpy 배열을 리스트로 변환
+    if isinstance(keypoints, torch.Tensor):
+        keypoints = keypoints.cpu().numpy()
+    if isinstance(keypoint_scores, torch.Tensor):
+        keypoint_scores = keypoint_scores.cpu().numpy()
+    
+    # 차원 정규화: (K, 2) -> (1, K, 2)
+    if keypoints.ndim == 2:
+        keypoints = keypoints[np.newaxis, :, :]
+    if keypoint_scores.ndim == 1:
+        keypoint_scores = keypoint_scores[np.newaxis, :]
+    
+    # 각 인스턴스별로 저장
+    predictions = []
+    for inst_idx in range(keypoints.shape[0]):
+        inst_keypoints = keypoints[inst_idx]  # (K, 2)
+        inst_scores = keypoint_scores[inst_idx]  # (K,)
+        
+        # COCO 형식으로 변환: [x1, y1, v1, x2, y2, v2, ...]
+        # v는 visibility: 0=not labeled, 1=labeled but not visible, 2=labeled and visible
+        coco_keypoints = []
+        for kp_idx in range(inst_keypoints.shape[0]):
+            x, y = float(inst_keypoints[kp_idx, 0]), float(inst_keypoints[kp_idx, 1])
+            score = float(inst_scores[kp_idx])
+            # score > 0이면 visible (2), 아니면 not visible (0)
+            visibility = 2 if score > 0 else 0
+            coco_keypoints.extend([x, y, visibility])
+        
+        pred_dict = {
+            'keypoints': coco_keypoints,
+            'keypoint_scores': inst_scores.tolist(),
+        }
+        
+        # 메타 정보 추가
+        if metainfo is not None:
+            if 'img_id' in metainfo:
+                pred_dict['image_id'] = metainfo['img_id']
+            if 'img_path' in metainfo:
+                pred_dict['img_path'] = metainfo['img_path']
+        
+        predictions.append(pred_dict)
+    
+    # JSON 파일로 저장
+    with open(output_path, 'w', encoding='utf-8') as f:
+        json.dump(predictions, f, indent=2, ensure_ascii=False)
 
 
 def init_detector(model_cfg: Config, det_model: Optional[str] = None,
@@ -655,6 +760,137 @@ def main():
                 else:
                     print(f"Warning: {img_path}에서 유효한 논문 keypoint 인덱스를 찾을 수 없습니다.")
         
+        # Keypoint 저장 (JSON 형식)
+        if args.save_keypoints:
+            if result['keypoints'] is not None and result['keypoint_scores'] is not None:
+                # pred_out_dir이 지정되면 그곳에 저장, 아니면 output_dir에 저장
+                if args.pred_out_dir:
+                    pred_output_dir = Path(args.pred_out_dir)
+                    pred_output_dir.mkdir(parents=True, exist_ok=True)
+                    json_path = pred_output_dir / f'{img_name}.json'
+                else:
+                    json_path = img_output_dir / 'keypoints.json'
+                
+                save_keypoints_json(
+                    result['keypoints'],
+                    result['keypoint_scores'],
+                    json_path,
+                    metainfo=metainfo
+                )
+            else:
+                print(f"Warning: {img_path}에서 keypoint를 추출할 수 없습니다.")
+        
+        # Keypoint 시각화 저장
+        if args.vis_out_dir:
+            if result['keypoints'] is not None and result['keypoint_scores'] is not None:
+                vis_output_dir = Path(args.vis_out_dir)
+                vis_output_dir.mkdir(parents=True, exist_ok=True)
+                vis_path = vis_output_dir / f'{img_name}.png'
+                
+                # keypoints를 numpy 배열로 변환
+                kpts = result['keypoints']
+                kpt_scores = result['keypoint_scores']
+                
+                if isinstance(kpts, torch.Tensor):
+                    kpts = kpts.cpu().numpy()
+                if isinstance(kpt_scores, torch.Tensor):
+                    kpt_scores = kpt_scores.cpu().numpy()
+                
+                # 차원 정규화: (K, 2) -> (1, K, 2)
+                if kpts.ndim == 2:
+                    kpts = kpts[np.newaxis, :, :]
+                if kpt_scores.ndim == 1:
+                    kpt_scores = kpt_scores[np.newaxis, :]
+                
+                # 첫 번째 인스턴스만 사용 (일반적으로 단일 인스턴스)
+                kpts_single = kpts[0]  # (K, 2)
+                kpt_scores_single = kpt_scores[0]  # (K,)
+                
+                # dataset_meta 가져오기 (model에서)
+                dataset_meta = None
+                if hasattr(model, 'dataset_meta') and model.dataset_meta is not None:
+                    dataset_meta = model.dataset_meta
+                elif hasattr(cfg, 'dataset_meta') and cfg.dataset_meta is not None:
+                    dataset_meta = cfg.dataset_meta
+                
+                # 시각화 수행
+                # 특정 keypoint만 표시하는 경우 필터링
+                if isinstance(args.show_kpt_idx, list) and len(args.show_kpt_idx) > 0:
+                    # 1-based를 0-based로 변환
+                    kpt_indices_to_show = [idx - 1 if idx > 0 else idx for idx in args.show_kpt_idx]
+                    # 유효한 인덱스만 필터링
+                    valid_indices = [idx for idx in kpt_indices_to_show if 0 <= idx < len(kpts_single)]
+                    
+                    if len(valid_indices) > 0:
+                        # 특정 keypoint만 필터링
+                        filtered_kpts = kpts_single[valid_indices]  # (N, 2)
+                        filtered_scores = kpt_scores_single[valid_indices]  # (N,)
+                        
+                        # Visualizer를 직접 사용해서 특정 keypoint만 그리기
+                        visualizer = PoseLocalVisualizer()
+                        if dataset_meta is not None:
+                            visualizer.set_dataset_meta(dataset_meta, skeleton_style=args.skeleton_style)
+                        
+                        # 원본 이미지 로드 (RGB 형식)
+                        img = np.array(Image.open(img_path))
+                        if len(img.shape) == 2:
+                            # Grayscale을 RGB로 변환
+                            img = np.stack([img] * 3, axis=-1)
+                        elif img.shape[2] == 1:
+                            img = np.repeat(img, 3, axis=2)
+                        # PIL은 RGB, OpenCV는 BGR이므로 변환 필요 없음 (visualize 함수가 처리)
+                        visualizer.set_image(img)
+                        
+                        # 특정 keypoint만 그리기 (skeleton은 그리지 않음)
+                        # keypoint만 직접 그리기 (인덱스 번호 없이)
+                        # 파란색으로 고정 (RGB: (0, 0, 255), BGR: (255, 0, 0))
+                        blue_color = (0, 0, 255)  # RGB 형식 (OpenCV 사용)
+                        
+                        for i, (kpt, score) in enumerate(zip(filtered_kpts, filtered_scores)):
+                            if score >= args.kpt_thr:
+                                # keypoint만 그리기 (인덱스 텍스트 없이, 파란색)
+                                # kpt는 (2,) 형태의 배열이어야 함
+                                visualizer.draw_circles(
+                                    kpt,  # (2,) 형태
+                                    radius=np.array([args.radius]),
+                                    face_colors=blue_color,
+                                    edge_colors=blue_color,
+                                    alpha=1.0,
+                                    line_widths=args.radius
+                                )
+                        
+                        vis_img = visualizer.get_image()
+                    else:
+                        # 유효한 인덱스가 없으면 일반 시각화
+                        vis_img = visualize(
+                            img=img_path,
+                            keypoints=kpts_single,
+                            keypoint_score=kpt_scores_single,
+                            metainfo=dataset_meta,
+                            show_kpt_idx=False,
+                            skeleton_style=args.skeleton_style,
+                            show=False,
+                            kpt_thr=args.kpt_thr
+                        )
+                else:
+                    # 모든 keypoint 표시
+                    vis_img = visualize(
+                        img=img_path,
+                        keypoints=kpts_single,
+                        keypoint_score=kpt_scores_single,
+                        metainfo=dataset_meta,
+                        show_kpt_idx=False,
+                        skeleton_style=args.skeleton_style,
+                        show=False,
+                        kpt_thr=args.kpt_thr
+                    )
+                
+                # 이미지 저장
+                vis_img_pil = Image.fromarray(vis_img)
+                vis_img_pil.save(vis_path)
+            else:
+                print(f"Warning: {img_path}에서 keypoint를 추출할 수 없어 시각화를 저장할 수 없습니다.")
+        
         # 결과 저장
         all_results.append({
             'img_path': img_path,
@@ -688,6 +924,15 @@ def main():
     if len(all_results) > 0 and all_results[0]['heatmaps'] is not None:
         hm_shape = all_results[0]['heatmaps'].shape
         print(f"   Heatmap shape: {hm_shape} (Keypoints: {hm_shape[0]}, H: {hm_shape[1]}, W: {hm_shape[2]})")
+    
+    if args.save_keypoints:
+        if args.pred_out_dir:
+            print(f"   Keypoint 예측 결과가 {args.pred_out_dir}에 저장되었습니다.")
+        else:
+            print(f"   Keypoint 예측 결과가 각 이미지 디렉토리의 keypoints.json 파일에 저장되었습니다.")
+    
+    if args.vis_out_dir:
+        print(f"   Keypoint 시각화 결과가 {args.vis_out_dir}에 저장되었습니다.")
 
 
 if __name__ == '__main__':

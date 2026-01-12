@@ -1,4 +1,5 @@
-import os, inspect
+import os
+import inspect
 from mmengine.config import read_base
 
 custom_imports = dict(

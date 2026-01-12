@@ -1,4 +1,3 @@
-import os
 from mmengine.config import read_base
 
 custom_imports = dict(
@@ -9,10 +8,8 @@ custom_imports = dict(
 with read_base():
     from mmpose.configs._base_.default_runtime import *  # noqa
 
-# work_dir 설정 (lazy import 환경에서 __file__ 사용 불가하므로 직접 지정)
-work_dir = os.path.join(
-    '..', 'work_dirs', 'foot_lat', 'td-hm_ViTPose-base_1xb8-200e_foot-lat-384x384_4x'
-)
+# work_dir 설정 (lazy import 환경에서 os 모듈 사용을 피하기 위해 문자열 직접 사용)
+work_dir = '../work_dirs/foot_lat/td-hm_ViTPose-base_1xb8-200e_foot-lat-384x384_4x'
 
 fp16 = dict(loss_scale='dynamic')
 auto_scale_lr = dict(base_batch_size=512)

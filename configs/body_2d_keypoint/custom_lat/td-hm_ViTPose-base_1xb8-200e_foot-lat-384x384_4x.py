@@ -9,16 +9,9 @@ custom_imports = dict(
 with read_base():
     from mmpose.configs._base_.default_runtime import *  # noqa
 
-# work_dir 설정 (lazy import 환경에서 안전하게 처리)
-try:
-    # __file__이 사용 가능한 경우 (일반 Python 실행)
-    _cfg_name = os.path.splitext(os.path.basename(__file__))[0]
-except NameError:
-    # __file__이 없는 경우 (lazy import 등) 직접 파일명 지정
-    _cfg_name = 'td-hm_ViTPose-base_1xb8-200e_foot-lat-384x384_4x'
-
+# work_dir 설정 (lazy import 환경에서 __file__ 사용 불가하므로 직접 지정)
 work_dir = os.path.join(
-    '..', 'work_dirs', 'foot_lat', _cfg_name
+    '..', 'work_dirs', 'foot_lat', 'td-hm_ViTPose-base_1xb8-200e_foot-lat-384x384_4x'
 )
 
 fp16 = dict(loss_scale='dynamic')

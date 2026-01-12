@@ -1,10 +1,13 @@
 import os, inspect
+from mmengine.config import read_base
+
 custom_imports = dict(
     imports=['mmpose.datasets.kfold_dataset', 'mmpose.engine.optim_wrappers.layer_decay_optim_wrapper'],
     allow_failed_imports=False
 )
 
-_base_ = ['../../_base_/default_runtime.py']
+with read_base():
+    from mmpose.configs._base_.default_runtime import *  # noqa
 
 # 현재 실행 중인 config 파일 경로
 _config_path = inspect.getfile(inspect.currentframe())

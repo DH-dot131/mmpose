@@ -173,14 +173,6 @@ model = dict(
         shift_heatmap=False,
     ))
 
-
-visualizer = dict(
-    name='visualizer',
-    type='PoseLocalVisualizer',
-    vis_backends=[
-        dict(type='TensorboardVisBackend'),
-    ])
-
 # custom_hooks에 추가
 custom_hooks = [
     dict(type='SyncBuffersHook'),

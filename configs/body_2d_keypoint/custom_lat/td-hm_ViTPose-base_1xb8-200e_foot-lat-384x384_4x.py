@@ -1,7 +1,7 @@
 from mmengine.config import read_base
 
 custom_imports = dict(
-    imports=['mmpose.visualization', 'mmpose.datasets.kfold_dataset', 'mmpose.engine.optim_wrappers.layer_decay_optim_wrapper'],
+    imports=['mmpose.models', 'mmpose.visualization', 'mmpose.datasets.kfold_dataset', 'mmpose.engine.optim_wrappers.layer_decay_optim_wrapper'],
     allow_failed_imports=False
 )
 
